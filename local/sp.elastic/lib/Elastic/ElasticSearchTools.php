@@ -1,28 +1,28 @@
 <?php
 
-namespace TQ;
+namespace SP\Elastic\Elastic;
 
-use CUserTypeManager,
-    CSearch,
-    Elasticsearch\ClientBuilder;
+use Bitrix\Main\Loader;
 
-\CModule::IncludeModule('iblock');
-\CModule::IncludeModule("sale");
-\CModule::IncludeModule("search");
-\CModule::IncludeModule("catalog");
+Loader::IncludeModule('iblock');
+Loader::IncludeModule("sale");
+Loader::IncludeModule("search");
+Loader::IncludeModule("catalog");
 
-class Tools
+class ElasticSearchTools
 {
-    private $iBlockId;
+    private $iBlockId,
+        $sectionId;
 
-    public function __construct($iBlockId = 2)
+    public function __construct($iBlockId = 2, $sectionId = 0)
     {
         $this->iBlockId = $iBlockId;
+        $this->sectionId = $sectionId;
     }
 
     public function getIndexIBlockElements()
     {
-        $arIBlock = $this->getIBlock();
+        $arIBlock = ElasticHelper::getIBlock($this->iBlockId);
         $arElements = [];
         $arSections = [];
         if ($arIBlock["INDEX_ELEMENT"] == 'Y') {
@@ -49,7 +49,7 @@ class Tools
                         $UserType = array();
                     }
                     if (array_key_exists("GetSearchContent", $UserType)) {
-                        $value = CSearch::KillTags(
+                        $value = \CSearch::KillTags(
                             call_user_func_array($UserType["GetSearchContent"],
                                 array(
                                     $arProperty,
@@ -59,7 +59,7 @@ class Tools
                             )
                         );
                     } elseif (array_key_exists("GetPublicViewHTML", $UserType)) {
-                        $value = CSearch::KillTags(
+                        $value = \CSearch::KillTags(
                             call_user_func_array($UserType["GetPublicViewHTML"],
                                 array(
                                     $arProperty,
@@ -85,9 +85,9 @@ class Tools
                 $arData = [
                     'ID' => $arFields['ID'],
                     'DATE' => strtotime($arFields['TIMESTAMP_X']),
-                    'NAME' => CSearch::KillTags($arFields['NAME']),
-                    'PREVIEW_TEXT' => CSearch::KillTags($arFields['PREVIEW_TEXT']),
-                    'DETAIL_TEXT' => CSearch::KillTags($arFields['DETAIL_TEXT'])
+                    'NAME' => \CSearch::KillTags($arFields['NAME']),
+                    'PREVIEW_TEXT' => \CSearch::KillTags($arFields['PREVIEW_TEXT']),
+                    'DETAIL_TEXT' => \CSearch::KillTags($arFields['DETAIL_TEXT'])
                 ];
                 if ($arFields['PROPERTIES']) {
                     foreach ($arFields['PROPERTIES'] as $code => $value) {
@@ -124,7 +124,7 @@ class Tools
                     'ID' => $arSection['ID'],
                     'NAME' => $arSection['NAME'],
                     'DATE' => strtotime($arSection['TIMESTAMP_X']),
-                    'DESCRIPTION' => CSearch::KillTags($arSection["DESCRIPTION"]),
+                    'DESCRIPTION' => \CSearch::KillTags($arSection["DESCRIPTION"]),
                 ];
                 if ($arUserFieldValues) {
                     foreach ($arUserFieldValues as $code => $value) {
@@ -142,8 +142,8 @@ class Tools
 
     public function sendToElastic($arElements)
     {
-        $client = $this->getElasticClient();
-        $this->indexMapping([
+        $client = ElasticHelper::getElasticClient();
+        ElasticHelper::indexMapping([
             'DATE' => [
                 'type' => 'date',
             ]
@@ -157,15 +157,15 @@ class Tools
                         'id' => $arElement['ID'],
                         'body' => $arElement
                     ]);
-                } catch (ClientResponseException $e) {
+                } catch (\ClientResponseException $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
-                } catch (ServerResponseException $e) {
+                } catch (\ServerResponseException $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
@@ -176,8 +176,8 @@ class Tools
 
     public function sendSectionsToElastic($arElements)
     {
-        $client = $this->getElasticClient();
-        $this->indexMapping([
+        $client = ElasticHelper::getElasticClient();
+        ElasticHelper::indexMapping([
             'DATE' => [
                 'type' => 'date',
             ]
@@ -191,15 +191,15 @@ class Tools
                         'id' => $arElement['ID'],
                         'body' => $arElement
                     ]);
-                } catch (ClientResponseException $e) {
+                } catch (\ClientResponseException $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
-                } catch (ServerResponseException $e) {
+                } catch (\ServerResponseException $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
-                } catch (Exception $e) {
+                } catch (\Exception $e) {
                     if ($USER->IsAdmin()) {
                         \Bitrix\Main\Diag\Debug::dump($e->getMessage());
                     }
@@ -210,7 +210,7 @@ class Tools
 
     public function SearchProductElastic($query, $sort = '')
     {
-        $client = $this->getElasticClient();
+        $client = ElasticHelper::getElasticClient();
         $arSort = $this->getSort($sort);
         $params = [
             'index' => 'products',
@@ -241,7 +241,7 @@ class Tools
 
     public function SearchSectionsElastic($query, $sort = '')
     {
-        $client = $this->getElasticClient();
+        $client = ElasticHelper::getElasticClient();
         $arSort = $this->getSort($sort);
         $params = [
             'index' => 'categories',
@@ -269,36 +269,16 @@ class Tools
         return $response['hits']['hits'];
     }
 
-    public function sendFilterToElastic()
+    private function sendSearchStatistic($index, $query)
     {
-        $arElements = $this->getFilterProducts();
-        $index = 'product_filter';
-        $client = $this->getElasticClient();
-
-        global $USER;
-        if ($arElements) {
-            foreach ($arElements as $arElement) {
-                try {
-                    $response = $client->index([
-                        'index' => $index,
-                        'id' => $arElement['ID'],
-                        'body' => $arElement
-                    ]);
-                } catch (ClientResponseException $e) {
-                    if ($USER->IsAdmin()) {
-                        \Bitrix\Main\Diag\Debug::dump($e->getMessage());
-                    }
-                } catch (ServerResponseException $e) {
-                    if ($USER->IsAdmin()) {
-                        \Bitrix\Main\Diag\Debug::dump($e->getMessage());
-                    }
-                } catch (Exception $e) {
-                    if ($USER->IsAdmin()) {
-                        \Bitrix\Main\Diag\Debug::dump($e->getMessage());
-                    }
-                }
-            }
-        }
+        $client = ElasticHelper::getElasticClient();
+        $client->index([
+            'index' => $index,
+            'body' => [
+                'query' => $query,
+                'date' => date('d.m.Y')
+            ]
+        ]);
     }
 
     private function getSort($sort = '')
@@ -325,133 +305,6 @@ class Tools
                 break;
         }
         return $arSort;
-    }
-
-    private function getFilterProducts()
-    {
-        $arProducts = [];
-        $arFilterProperties = $this->getFilterProperties();
-        $arSelect = array(
-            "ID",
-            "IBLOCK_ID",
-            "NAME",
-            "PREVIEW_TEXT",
-            "DETAIL_TEXT",
-            "IBLOCK_SECTION_ID",
-            "TIMESTAMP_X"
-        );
-        $arFilter = ['IBLOCK_ID' => $this->iBlockId, 'ACTIVE' => 'Y', 'ACTIVE_DATE' => 'Y'];
-        $res = \CIBlockElement::GetList([], $arFilter, false, false, $arSelect);
-        while ($ob = $res->GetNextElement()) {
-            $arFields = $ob->GetFields();
-            $arProperties = $ob->GetProperties(['sort' => 'asc'],
-                ['ACTIVE' => 'Y', 'ID' => array_column($arFilterProperties, 'ID')]);
-            foreach ($arProperties as $arProperty) {
-                $arFields['PROPERTIES'][$arProperty['CODE']] = $arProperty['VALUE'];
-            }
-            $arData = [
-                'ID' => $arFields['ID'],
-                'SECTION_ID' => $arFields['IBLOCK_SECTION_ID'],
-            ];
-            if ($arFields['PROPERTIES']) {
-                foreach ($arFields['PROPERTIES'] as $code => $value) {
-                    $arData[sprintf('PROPERTY_%s', $code)] = $value ?: '';
-                    $arData[sprintf('PROPERTY_%s_keyword', $code)] = $value ?: '';
-                }
-            }
-
-            $arProducts[] = $arData;
-        }
-
-        $arIndexProperties = [];
-        foreach ($arFilterProperties as $arFilterProperty) {
-            switch ($arFilterProperty['PROPERTY_TYPE']) {
-                case 'N':
-                    $type = 'float';
-                    break;
-                default:
-                    $type = 'text';
-                    break;
-            }
-
-            $arIndexProperties[sprintf('PROPERTY_%s', $arFilterProperty['CODE'])] = [
-                'type' => $type,
-            ];
-            $arIndexProperties[sprintf('PROPERTY_%s_keyword', $arFilterProperty['CODE'])] = [
-                'type' => 'keyword',
-            ];
-        }
-        $this->indexMapping($arIndexProperties, 'product_filter');
-
-
-        return $arProducts;
-    }
-
-    private function indexMapping($arParams, $index)
-    {
-        $client = $this->getElasticClient();
-        $params = [
-            'index' => $index,
-            'body' => [
-                'properties' => $arParams,
-            ],
-        ];
-        $isIndexExists = $client->indices()->exists(['index' => $index]);
-        if ($isIndexExists) {
-            $client->indices()->delete(['index' => $index]);
-        }
-
-        $client->indices()->create(['index' => $index]);
-        $client->indices()->putMapping($params);
-    }
-
-    private function getFilterProperties()
-    {
-        $arProps = [];
-        $arProperties = \CIBlockSectionPropertyLink::GetArray($this->iBlockId, 0);
-        $arFilterProperties = array_filter($arProperties, function ($arItem) {
-            return $arItem['SMART_FILTER'] == 'Y';
-        });
-        if ($arFilterProperties) {
-            $arPropertyIds = array_column($arFilterProperties, 'PROPERTY_ID');
-            $properties = \CIBlockProperty::GetList([], array(
-                "ACTIVE" => "Y",
-                "IBLOCK_ID" => $this->iBlockId,
-            ));
-            while ($arProperty = $properties->GetNext()) {
-                if (in_array($arProperty['ID'], $arPropertyIds)) {
-                    $arProperty['SECTION_DATA'] = $arFilterProperties[$arProperty['ID']];
-                    $arProps[$arProperty['CODE']] = $arProperty;
-                }
-            }
-        }
-        return $arProps;
-    }
-
-    private function sendSearchStatistic($index, $query)
-    {
-        $client = $this->getElasticClient();
-        $client->index([
-            'index' => $index,
-            'body' => [
-                'query' => $query,
-                'date' => date('d.m.Y')
-            ]
-        ]);
-    }
-
-    private function getElasticClient()
-    {
-        require_once($_SERVER['DOCUMENT_ROOT'] . '/vendor/autoload.php');
-        return ClientBuilder::create()
-            ->setHosts(['host'])
-            ->setBasicAuthentication('elastic', 'password')
-            ->build();
-    }
-
-    private function getIBlock()
-    {
-        return \CIBlock::GetList([], ['ID' => $this->iBlockId])->Fetch();
     }
 
 }

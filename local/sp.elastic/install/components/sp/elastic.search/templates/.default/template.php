@@ -169,4 +169,6 @@ use Bitrix\Main\Page\Asset;
             "USE_PRODUCT_QUANTITY" => "N"
         )
     );?>
-<?}?>
+<?}else{
+    echo 'Товары не найдены';
+}?>

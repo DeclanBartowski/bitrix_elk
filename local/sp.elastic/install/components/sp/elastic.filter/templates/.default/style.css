@@ -1,0 +1,15 @@
+.elastic-form ul {
+    list-style: none;
+}
+
+.elastic-form ul.directory-list {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+.elastic-form ul.directory-list li {
+    margin-right: 10px;
+}
+.elastic-form .disabled{
+    opacity: 0.5;
+}
